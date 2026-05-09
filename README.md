@@ -78,7 +78,7 @@ coderift/
 ### 1. Clone the repo
 
 ```powershell
-git clone https://github.com/yourname/coderift.git
+git clone https://github.com/Mizbataranumm/coderift.git
 cd coderift
 ```
 
