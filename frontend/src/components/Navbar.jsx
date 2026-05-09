@@ -29,7 +29,7 @@ export default function Navbar({ variant = "app" }) {
                 <img src={user.avatar} alt={user.username} className="w-6 h-6 rounded-full" />
                 <span className="text-sm font-medium" data-testid="navbar-username">{user.username}</span>
               </div>
-              <button onClick={() => { logout(); nav("/"); }} className="btn-ghost flex items-center gap-1.5" data-testid="navbar-logout-btn">
+              <button onClick={() => { logout(); window.location.href = "/"; }} className="btn-ghost flex items-center gap-1.5" data-testid="navbar-logout-btn">
                 <LogOut className="w-4 h-4" /> <span className="hidden sm:inline">Sign out</span>
               </button>
             </div>

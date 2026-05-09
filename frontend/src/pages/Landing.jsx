@@ -17,11 +17,10 @@ const SAMPLE_LINES = [
 function AnimatedCodePreview() {
   const [lines, setLines] = useState([]);
   useEffect(() => {
-    let i = 0;
     const id = setInterval(() => {
       setLines((prev) => {
         if (prev.length >= SAMPLE_LINES.length) { clearInterval(id); return prev; }
-        return [...prev, SAMPLE_LINES[i++]];
+        return [...prev, SAMPLE_LINES[prev.length]];
       });
     }, 220);
     return () => clearInterval(id);
