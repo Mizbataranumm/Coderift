@@ -1,0 +1,37 @@
+{
+  "summary": "Full backend pytest + frontend Playwright e2e of Coderift. Backend: 14/15 pytest pass (1 known test bug per E1: test_register asserts uppercase email but server lowercases — IGNORED). Frontend: 11/11 critical flows working — Landing, protected routes, register, dashboard, create room (8-char ID), Monaco editor + all toolbar/rail buttons, Run (stdout 'Hello, Coder!'), AI Review (1.8KB markdown from Gemini), AI Fix (apply-fix-btn visible), Login (alice@test.com). One minor UX issue: logout from /dashboard lands on /login instead of / (Protected route Navigate fires before navbar's nav('/')). Socket.IO handshake passes; one console warning about WebSocket transport closing during navigation (auto-falls back to polling, not blocking).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "test file /app/backend/tests/backend_test.py::test_register", "issue": "Test bug: asserts uppercase email back but server (correctly) lowercases. Per E1 instructions: ignore — server behaviour is correct."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Navbar logout handler", "issue": "After clicking logout from /dashboard, user lands on /login instead of / (landing). Protected component's <Navigate to=\"/login\"> fires synchronously when AuthContext clears user, before the inline nav('/') in Navbar runs. Logout itself works (token cleared, navbar shows logged-out state).", "selector": "[data-testid=\"navbar-logout-btn\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "(LOW) Fix logout redirect: in Navbar.jsx, set user to null AFTER navigating, or call nav('/', { replace: true }) before logout(), so that Protected does not race and bounce to /login. Functionally logout works; this is purely UX.",
+    "(KNOWN/IGNORE) test_register assertion uses uppercase email — fix the assertion to .lower() to make pytest 15/15 green."
+  ],
+  "critical_code_review_comments": [
+    "Landing.jsx provides 6 feature cards and testimonial section as required.",
+    "Editor.jsx is large (~420 lines) with all required testids — could split into <Toolbar/>, <LeftRail/>, <RightPanel/> sub-components for maintainability but not blocking.",
+    "Editor page does NOT use the global <Navbar/> (uses its own header). Logout in Editor must be done via dashboard — acceptable design choice but worth documenting.",
+    "Socket.IO WebSocket upgrade emits one console warning when leaving editor route ('WebSocket is closed before the connection is established'). Polling fallback works. Consider explicit socket.disconnect() in Editor unmount cleanup.",
+    "Output panel correctly executes Python via local subprocess (Hello, Coder!), confirming SKIP_PISTON local-fallback path works.",
+    "AI endpoints (Gemini 2.5-flash) respond well within ~5-8s; UI shows raw markdown including triple-backticks — could render via react-markdown for prettier output (cosmetic)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "93% (14/15, the 1 fail is a known test-file bug per E1)", "frontend": "100% of critical flows; 1 minor UX issue on logout redirect"},
+  "test_credentials": "alice@test.com / password123 (verified working). New users registered during test prefixed tu* (random uuid).",
+  "seed_data_creation": "Created 1 new test user (tu0c61a3@test.com / password123) and 1 room ('Test Sprint', 8-char id QCUC1KLX) on alice's account during e2e.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend test file at /app/backend/tests/backend_test.py is solid regression suite (auth, rooms, execute py/js/unsupported, 5 AI endpoints, socket.io handshake). Only known issue is test_register's uppercase assertion. Frontend testids are kebab-case across all pages (Landing, Login, Register, Dashboard, Editor, Navbar). Logout from /dashboard races with Protected — lands on /login. AI review returned 1804 chars, AI fix returned code with apply-fix button — both working through Gemini.",
+  "rca of the issue": "Logout UX bug RCA: Navbar.jsx onClick is `() => { logout(); nav('/'); }`. logout() synchronously updates AuthContext.user=null. React re-renders <Protected> which sees !user and returns <Navigate to='/login' replace/>. This Navigate fires before the imperative nav('/') from useNavigate. Mitigation: either call nav('/', {replace:true}) BEFORE logout(), or put logout()+nav inside a setTimeout(()=>{},0), or move the redirect-on-logout into AuthContext effect targeting '/'."
+}
