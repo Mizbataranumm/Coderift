@@ -1,5 +1,4 @@
-Here's your full complete README.md — copy everything:
-markdown# Coderift
+# Coderift
 
 > A real-time collaborative code editor with AI superpowers, built for the AI era.
 
