@@ -7,7 +7,7 @@ import { getSocket } from "@/lib/socket";
 import { useAuth } from "@/context/AuthContext";
 import {
   Code2, Copy, Save, Play, Sparkles, Wand2, Share2, X, Loader2, Users, Clock,
-  Swords, Flame, History, ChevronRight, Terminal, BookOpen, Zap
+  Swords, Flame, History, ChevronRight, Terminal, BookOpen, Zap, FileCode2
 } from "lucide-react";
 
 const LANGUAGES = [
@@ -56,6 +56,12 @@ export default function Editor() {
 
   // Battle mode
   const [battle, setBattle] = useState({ active: false, endAt: null, remaining: 0 });
+
+  // AI Generate modal
+  const [genOpen, setGenOpen] = useState(false);
+  const [genPrompt, setGenPrompt] = useState("");
+  const [genMode, setGenMode] = useState("replace"); // 'replace' | 'insert'
+  const [genBusy, setGenBusy] = useState(false);
 
   // Internal refs
   const editorRef = useRef(null);
@@ -223,6 +229,43 @@ export default function Editor() {
 
   const showHistory = () => setPanelTab("history");
 
+  const openGenerate = () => {
+    setGenPrompt("");
+    setGenMode("replace");
+    setGenOpen(true);
+  };
+
+  const runGenerate = async () => {
+    if (!genPrompt.trim()) { toast.error("Enter a prompt"); return; }
+    setGenBusy(true);
+    try {
+      const { data } = await api.post("/rooms/ai-generate", { code, language, prompt: genPrompt });
+      const generated = (data.code || data.result || "").trim();
+      if (!generated) { toast.error("AI returned no code"); return; }
+      let next;
+      if (genMode === "replace") {
+        next = generated;
+      } else {
+        // insert at cursor
+        const ed = editorRef.current;
+        if (ed) {
+          const sel = ed.getSelection();
+          ed.executeEdits("ai-generate", [{ range: sel, text: "\n" + generated + "\n", forceMoveMarkers: true }]);
+          next = ed.getValue();
+        } else {
+          next = code + "\n\n" + generated;
+        }
+      }
+      setCode(next);
+      socketRef.current?.emit("code_change", { roomId, code: next });
+      socketRef.current?.emit("save_code", { roomId, code: next, language });
+      toast.success("Code generated");
+      setGenOpen(false);
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "AI generation failed");
+    } finally { setGenBusy(false); }
+  };
+
   if (!room) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="w-5 h-5 animate-spin text-[#7C3AED]" /></div>;
 
   const rageColor = rage < 30 ? "#10B981" : rage < 65 ? "#F59E0B" : "#EF4444";
@@ -258,6 +301,9 @@ export default function Editor() {
           </button>
           <button onClick={() => runAI("review")} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-[#7C3AED]/30 text-[#7C3AED] text-xs font-semibold hover:bg-[#7C3AED]/5 transition-colors" data-testid="editor-aireview-btn" title="AI Review">
             <Sparkles className="w-3.5 h-3.5" /> <span className="hidden md:inline">Review</span>
+          </button>
+          <button onClick={openGenerate} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-[#7C3AED]/30 text-[#7C3AED] text-xs font-semibold hover:bg-[#7C3AED]/5 transition-colors" data-testid="editor-aigenerate-btn" title="AI Generate from prompt">
+            <FileCode2 className="w-3.5 h-3.5" /> <span className="hidden md:inline">Generate</span>
           </button>
           <button onClick={shareRoom} className="btn-ghost flex items-center gap-1.5 text-xs" data-testid="editor-share-btn">
             <Share2 className="w-3.5 h-3.5" /> <span className="hidden md:inline">Share</span>
@@ -390,6 +436,68 @@ export default function Editor() {
         <span>Ln {cursorPos.line}, Col {cursorPos.column}</span>
         <span className="ml-auto">{savedAt ? `Saved ${new Date(savedAt).toLocaleTimeString()}` : "Not saved"}</span>
       </footer>
+
+      {/* AI Generate modal */}
+      {genOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4" data-testid="generate-modal">
+          <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={() => !genBusy && setGenOpen(false)} />
+          <div className="relative w-full max-w-lg card p-7 fade-up">
+            <div className="flex items-start justify-between mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-lg bg-[#7C3AED]/10 flex items-center justify-center">
+                  <FileCode2 className="w-4 h-4 text-[#7C3AED]" />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold tracking-tight">AI Generate</h3>
+                  <p className="text-xs muted-text">Describe what you want — Gemini will write it in <span className="font-medium text-[#0a0a0a]">{language}</span>.</p>
+                </div>
+              </div>
+              <button onClick={() => !genBusy && setGenOpen(false)} className="hover:bg-black/5 rounded p-1" data-testid="generate-close-btn">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <textarea
+              value={genPrompt}
+              onChange={(e) => setGenPrompt(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) runGenerate(); }}
+              placeholder="e.g. Binary search function with unit tests"
+              rows={4}
+              className="input mono text-sm resize-none"
+              autoFocus
+              disabled={genBusy}
+              data-testid="generate-prompt-input"
+            />
+
+            <div className="mt-4 flex items-center gap-2 text-xs">
+              <span className="muted-text">Action:</span>
+              <button
+                onClick={() => setGenMode("replace")}
+                className={`px-3 py-1.5 rounded-lg border transition-colors ${genMode === "replace" ? "bg-[#7C3AED] text-white border-[#7C3AED]" : "bg-white border-black/10 hover:border-black/20"}`}
+                data-testid="generate-mode-replace"
+                disabled={genBusy}
+              >Replace all</button>
+              <button
+                onClick={() => setGenMode("insert")}
+                className={`px-3 py-1.5 rounded-lg border transition-colors ${genMode === "insert" ? "bg-[#7C3AED] text-white border-[#7C3AED]" : "bg-white border-black/10 hover:border-black/20"}`}
+                data-testid="generate-mode-insert"
+                disabled={genBusy}
+              >Insert at cursor</button>
+            </div>
+
+            <div className="mt-5 flex items-center justify-between gap-2">
+              <span className="text-[11px] muted-text">⌘/Ctrl + Enter to generate</span>
+              <div className="flex gap-2">
+                <button onClick={() => !genBusy && setGenOpen(false)} className="btn-secondary text-sm" disabled={genBusy} data-testid="generate-cancel-btn">Cancel</button>
+                <button onClick={runGenerate} disabled={genBusy || !genPrompt.trim()} className="btn-primary text-sm flex items-center gap-2" data-testid="generate-submit-btn">
+                  {genBusy && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {genBusy ? "Generating…" : "Generate"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
