@@ -30,8 +30,22 @@ JWT_SECRET = os.environ.get("JWT_SECRET", "dev-secret")
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 JWT_ALGO = "HS256"
 JWT_EXPIRES_HOURS = 24 * 7
-PISTON_URL = "https://emkc.org/api/v2/piston"
-SKIP_PISTON = os.environ.get("SKIP_PISTON", "1") == "1"  # Default skip — public API is whitelist-only since Feb 2026
+JUDGE0_URL = os.environ.get("JUDGE0_URL", "https://ce.judge0.com")  # Public Judge0 CE — free, no auth
+JUDGE0_RAPIDAPI_KEY = os.environ.get("JUDGE0_RAPIDAPI_KEY", "")  # Optional: switches to rapidapi endpoint if set
+
+# Judge0 language IDs (verified from ce.judge0.com /languages)
+JUDGE0_LANG_IDS = {
+    "javascript": 102,  # Node.js 22.08.0
+    "typescript": 101,  # TypeScript 5.6.2
+    "python": 109,      # Python 3.13.2
+    "java": 91,         # Java JDK 17.0.6
+    "cpp": 105,         # C++ GCC 14.1.0
+    "go": 107,          # Go 1.23.5
+    "rust": 108,        # Rust 1.85.0
+    "ruby": 72,         # Ruby 2.7.0
+    "php": 98,          # PHP 8.3.11
+    "csharp": 51,       # C# Mono 6.6.0.161
+}
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("coderift")
@@ -353,21 +367,7 @@ async def ai_optimize(payload: AICodeIn, user: Dict[str, Any] = Depends(current_
 
 
 # ---------- Code Execution ----------
-PISTON_LANG_MAP = {
-    "javascript": ("javascript", "1.32.3"),
-    "typescript": ("typescript", "1.32.3"),
-    "python": ("python", "3.10.0"),
-    "java": ("java", "15.0.2"),
-    "cpp": ("c++", "10.2.0"),
-    "go": ("go", "1.16.2"),
-    "rust": ("rust", "1.68.2"),
-    "ruby": ("ruby", "3.0.1"),
-    "php": ("php", "8.2.3"),
-    "csharp": ("csharp", "6.12.0"),
-}
-
-
-# Local subprocess fallback (Piston public API is whitelist-only since Feb 2026)
+# Local subprocess fallback for python/javascript/cpp when Judge0 is unreachable
 import subprocess
 import tempfile
 import shutil
@@ -413,40 +413,68 @@ def _run_local(language: str, code: str, stdin: str) -> Dict[str, Any]:
             return {"stdout": "", "stderr": f"Runtime not installed: {e}", "code": 127}
 
 
+async def _run_judge0(language: str, code: str, stdin: str) -> Optional[Dict[str, Any]]:
+    """Submit to Judge0 CE; returns result dict or None on hard failure."""
+    lang_id = JUDGE0_LANG_IDS.get(language)
+    if not lang_id:
+        return None
+    headers = {"Content-Type": "application/json"}
+    base_url = JUDGE0_URL
+    if JUDGE0_RAPIDAPI_KEY:
+        base_url = "https://judge0-ce.p.rapidapi.com"
+        headers["X-RapidAPI-Key"] = JUDGE0_RAPIDAPI_KEY
+        headers["X-RapidAPI-Host"] = "judge0-ce.p.rapidapi.com"
+    body = {"source_code": code, "language_id": lang_id, "stdin": stdin or ""}
+    try:
+        async with httpx.AsyncClient(timeout=25) as client:
+            r = await client.post(f"{base_url}/submissions?wait=true&base64_encoded=false", json=body, headers=headers)
+            if r.status_code != 200 and r.status_code != 201:
+                logger.warning(f"Judge0 returned {r.status_code}: {r.text[:200]}")
+                return None
+            data = r.json()
+            return {
+                "stdout": data.get("stdout") or "",
+                "stderr": data.get("stderr") or "",
+                "compile_output": data.get("compile_output") or "",
+                "code": (data.get("status", {}) or {}).get("id", 0),
+                "status": (data.get("status", {}) or {}).get("description", ""),
+                "time": data.get("time"),
+                "memory": data.get("memory"),
+            }
+    except Exception as e:
+        logger.warning(f"Judge0 error: {e}")
+        return None
+
+
 @api.post("/execute")
 async def execute_code(payload: ExecuteIn, user: Dict[str, Any] = Depends(current_user)):
-    lang_info = PISTON_LANG_MAP.get(payload.language)
-    if not lang_info:
+    if payload.language not in JUDGE0_LANG_IDS:
         raise HTTPException(status_code=400, detail="Unsupported language")
-    lang, version = lang_info
-    body = {
-        "language": lang,
-        "version": version,
-        "files": [{"content": payload.code}],
-        "stdin": payload.stdin or "",
-    }
-    # Try public Piston first (may be 401 since Feb 2026 whitelist-only)
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            r = await client.post(f"{PISTON_URL}/execute", json=body)
-            if r.status_code == 200:
-                data = r.json()
-                run = data.get("run", {})
-                return {
-                    "stdout": run.get("stdout", ""),
-                    "stderr": run.get("stderr", ""),
-                    "output": run.get("output", ""),
-                    "code": run.get("code", 0),
-                    "signal": run.get("signal"),
-                    "language": lang,
-                    "version": version,
-                    "engine": "piston",
-                }
-            logger.warning(f"Piston returned {r.status_code}; using local runner")
-    except Exception as e:
-        logger.warning(f"Piston unreachable: {e}; using local runner")
 
-    # Local subprocess fallback
+    # 1) Try Judge0 CE (public — supports all 10 languages)
+    j = await _run_judge0(payload.language, payload.code, payload.stdin or "")
+    if j is not None:
+        # Merge stderr + compile_output for visibility
+        stderr = j["stderr"] or ""
+        if j.get("compile_output"):
+            stderr = (j["compile_output"].rstrip() + ("\n" + stderr if stderr else ""))
+        # status.id 3 = Accepted; others are runtime/compile errors
+        exit_code = 0 if j["code"] == 3 else 1
+        return {
+            "stdout": j["stdout"],
+            "stderr": stderr,
+            "output": j["stdout"] + stderr,
+            "code": exit_code,
+            "signal": None,
+            "language": payload.language,
+            "version": "judge0-ce",
+            "engine": "judge0",
+            "status": j.get("status"),
+            "time": j.get("time"),
+            "memory": j.get("memory"),
+        }
+
+    # 2) Local subprocess fallback (only python/javascript/cpp)
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(None, _run_local, payload.language, payload.code, payload.stdin or "")
     return {

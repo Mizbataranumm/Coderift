@@ -8,14 +8,14 @@ Build a full-stack real-time collaborative code editor "Coderift" with real-time
 - Frontend: React 19 + Monaco Editor + Tailwind + socket.io-client at port 3000
 - DB: MongoDB (motor)
 - AI: Gemini 2.5-flash via `emergentintegrations` (EMERGENT_LLM_KEY)
-- Code execution: Local subprocess fallback (Python, JS, C++) — Piston public API became whitelist-only Feb 2026
+- Code execution: **Judge0 CE public** (`https://ce.judge0.com`, free, no auth) for all 10 languages — Python, JS, TS, Java, C++, Go, Rust, Ruby, PHP, C#. Local subprocess fallback (Python/JS/C++) if Judge0 unreachable. Optional `JUDGE0_RAPIDAPI_KEY` env var switches to RapidAPI endpoint.
 - Auth: JWT (HS256, 7-day expiry), bcrypt password hashing
 
 ## Implemented (May 2026)
 - ✅ Auth: register, login, /me with JWT
 - ✅ Rooms: create, get, list-mine; 8-char unique room IDs; auto-add joiners as participants
 - ✅ Real-time Socket.IO: code-change, language-change, cursor-move, presence, save, battle-timer
-- ✅ Code execution: Python, JS (full), C++ (compiles), other langs return helpful error
+- ✅ Code execution: All 10 languages (Python, JS, TS, Java, C++, Go, Rust, Ruby, PHP, C#) via public Judge0 CE; local subprocess fallback for python/js/cpp
 - ✅ AI endpoints: review, quickfix, explain, generate, optimize (Gemini)
 - ✅ Frontend pages: Landing, Login, Register, Dashboard, Editor
 - ✅ Editor: Monaco vs-light, language switcher, run, AI fix/review buttons, output/AI/history right panel, status bar with presence + cursor pos
